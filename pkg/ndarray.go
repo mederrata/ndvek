@@ -5,15 +5,31 @@ import (
 )
 
 type Major int
+type Number interface {
+	constraints.Integer | constraints.Float
+}
+type BinopFloat64 func(float64, float64) float64
+
+func Mul64(a, b float64) float64 {
+	return a * b
+}
+
+func Add64(a, b float64) float64 {
+	return a + b
+}
+
+func Div64(a, b float64) float64 {
+	return a / b
+}
+
+func Minus64(a, b float64) float64 {
+	return a - b
+}
 
 const (
 	Row Major = iota
 	Column
 )
-
-type Number interface {
-	constraints.Integer | constraints.Float
-}
 
 type NDArray struct {
 	data   []float64
@@ -66,7 +82,7 @@ func (nd *NDArray) Set(value float64, indices ...int) {
 	nd.data[idx] = value
 }
 
-func (nd *NDArray) BroadcastAdd(other *NDArray) *NDArray {
+func (nd *NDArray) BroadcastOp(other *NDArray, op BinopFloat64) *NDArray {
 	resultShape := broadcastShape(nd.shape, other.shape)
 	resultData := make([]float64, prod(resultShape))
 	result := NewNDArray(resultData, resultShape)
@@ -77,7 +93,7 @@ func (nd *NDArray) BroadcastAdd(other *NDArray) *NDArray {
 		indices := indicesFromFlatIndex(i, result.shape)
 		idx1 := indicesToFlatIndex(broadcastIndex(indices, nd.shape), nd.shape)
 		idx2 := indicesToFlatIndex(broadcastIndex(indices, other.shape), other.shape)
-		result.data[i] = nd.data[idx1] + other.data[idx2]
+		result.data[i] = op(nd.data[idx1], other.data[idx2])
 	}
 
 	return result
