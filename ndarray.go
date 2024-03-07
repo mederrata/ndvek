@@ -1,4 +1,4 @@
-package pkg
+package ndvek
 
 import (
 	"golang.org/x/exp/constraints"
@@ -80,6 +80,21 @@ func (nd *NDArray) At(indices ...int) float64 {
 func (nd *NDArray) Set(value float64, indices ...int) {
 	idx := nd.Index(indices...)
 	nd.data[idx] = value
+}
+
+func (nd *NDArray) NewAxis(index int) {
+	nd.shape = append(nd.shape[:index+1], nd.shape[index:]...)
+	nd.shape[index] = 1
+}
+
+func (nd *NDArray) Squeeze() {
+	positive := []int{}
+	for i := range nd.shape {
+		if nd.shape[i] > 1 {
+			positive = append(positive, nd.shape[i])
+		}
+	}
+	nd.shape = positive
 }
 
 func (nd *NDArray) BroadcastOp(other *NDArray, op BinopFloat64) *NDArray {
