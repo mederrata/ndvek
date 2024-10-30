@@ -1,176 +1,119 @@
 package ndvek
 
 import (
-	"golang.org/x/exp/constraints"
+	"errors"
+	"fmt"
 )
 
-type Major int
-type Number interface {
-	constraints.Integer | constraints.Float
-}
-type BinopFloat64 func(float64, float64) float64
-
-func Mul64(a, b float64) float64 {
-	return a * b
+// NdArray represents a multi-dimensional array with shape and data.
+type NdArray struct {
+	shape []int
+	data  []float64
 }
 
-func Add64(a, b float64) float64 {
-	return a + b
-}
-
-func Div64(a, b float64) float64 {
-	return a / b
-}
-
-func Minus64(a, b float64) float64 {
-	return a - b
-}
-
-const (
-	Row Major = iota
-	Column
-)
-
-type NDArray struct {
-	data   []float64
-	shape  []int
-	stride []int
-	major  Major
-}
-
-func NewNDArray(data []float64, shape []int) *NDArray {
-	nd := &NDArray{
-		data:  data,
-		shape: shape,
-		major: Row,
+// NewNdArray creates a new NdArray given a shape and initial data.
+func NewNdArray(shape []int, data []float64) (*NdArray, error) {
+	size := 1
+	for _, dim := range shape {
+		size *= dim
 	}
-	// assert.Equal(len(data), prod(shape), "Shape and data are incompatible.")
-	nd.calculateStride()
-	return nd
+	if size != len(data) {
+		return nil, errors.New("data length does not match shape dimensions")
+	}
+	return &NdArray{shape: shape, data: data}, nil
 }
 
-func (nd *NDArray) calculateStride() {
-	nd.stride = make([]int, len(nd.shape))
-	stride := 1
-	for i := len(nd.shape) - 1; i >= 0; i-- {
-		nd.stride[i] = stride
-		stride *= nd.shape[i]
-	}
+// Shape returns the shape of the ndarray.
+func (a *NdArray) Shape() []int {
+	return a.shape
 }
 
-func (nd *NDArray) Index(indices ...int) int {
-	if len(indices) != len(nd.shape) {
-		panic("Invalid number of indices")
+// broadcastShapes finds a broadcasted shape from two shapes.
+func broadcastShapes(shape1, shape2 []int) ([]int, error) {
+	len1, len2 := len(shape1), len(shape2)
+	maxLen := len1
+	if len2 > len1 {
+		maxLen = len2
 	}
-	var index int
-	for i, idx := range indices {
-		if idx >= nd.shape[i] || idx < 0 {
-			panic("Index out of range")
+	broadcastedShape := make([]int, maxLen)
+
+	for i := 0; i < maxLen; i++ {
+		dim1, dim2 := 1, 1
+		if i < len1 {
+			dim1 = shape1[len1-1-i]
 		}
-		index += idx * nd.stride[i]
-	}
-	return index
-}
-
-func (nd *NDArray) At(indices ...int) float64 {
-	idx := nd.Index(indices...)
-	return nd.data[idx]
-}
-
-func (nd *NDArray) Set(value float64, indices ...int) {
-	idx := nd.Index(indices...)
-	nd.data[idx] = value
-}
-
-func (nd *NDArray) NewAxis(index int) {
-	nd.shape = append(nd.shape[:index+1], nd.shape[index:]...)
-	nd.shape[index] = 1
-}
-
-func (nd *NDArray) Squeeze() {
-	positive := []int{}
-	for i := range nd.shape {
-		if nd.shape[i] > 1 {
-			positive = append(positive, nd.shape[i])
+		if i < len2 {
+			dim2 = shape2[len2-1-i]
+		}
+		if dim1 != 1 && dim2 != 1 && dim1 != dim2 {
+			return nil, fmt.Errorf("incompatible shapes for broadcasting: %v and %v", shape1, shape2)
+		}
+		if dim1 > dim2 {
+			broadcastedShape[maxLen-1-i] = dim1
+		} else {
+			broadcastedShape[maxLen-1-i] = dim2
 		}
 	}
-	nd.shape = positive
+	return broadcastedShape, nil
 }
 
-func (nd *NDArray) BroadcastOp(other *NDArray, op BinopFloat64) *NDArray {
-	resultShape := broadcastShape(nd.shape, other.shape)
-	resultData := make([]float64, prod(resultShape))
-	result := NewNDArray(resultData, resultShape)
+// broadcastIndex converts a single index to the correct offset for broadcasting.
+func broadcastIndex(shape, broadcastShape []int, index int) int {
+	offset := 0
+	factor := 1
+	for i := len(shape) - 1; i >= 0; i-- {
+		dim := shape[i]
+		bdim := broadcastShape[i+len(broadcastShape)-len(shape)]
+		if dim != bdim && dim == 1 {
+			offset += (index / factor) % bdim * factor
+		} else {
+			offset += (index / factor % dim) * factor
+		}
+		factor *= bdim
+	}
+	return offset
+}
 
-	// pad
+// applyOp applies an arithmetic operation with broadcasting.
+func applyOp(a, b *NdArray, op func(float64, float64) float64) (*NdArray, error) {
+	bShape, err := broadcastShapes(a.shape, b.shape)
+	if err != nil {
+		return nil, err
+	}
+
+	sizeOf := 1
+
+	for _, dim := range bShape {
+		sizeOf *= dim
+	}
+	resultData := make([]float64, sizeOf)
+
+	result := &NdArray{shape: bShape, data: resultData}
 
 	for i := 0; i < len(result.data); i++ {
-		indices := indicesFromFlatIndex(i, result.shape)
-		idx1 := indicesToFlatIndex(broadcastIndex(indices, nd.shape), nd.shape)
-		idx2 := indicesToFlatIndex(broadcastIndex(indices, other.shape), other.shape)
-		result.data[i] = op(nd.data[idx1], other.data[idx2])
+		aIndex := broadcastIndex(a.shape, bShape, i)
+		bIndex := broadcastIndex(b.shape, bShape, i)
+		result.data[i] = op(a.data[aIndex], b.data[bIndex])
 	}
-
-	return result
+	return result, nil
 }
 
-func broadcastIndex(index, shape []int) []int {
-	result := make([]int, len(index))
-	for i := 0; i < len(index); i++ {
-		if index[i] > shape[i]-1 {
-			result[i] = 0
-		} else {
-			result[i] = index[i]
-		}
-	}
-	return result
+// Add performs element-wise addition with broadcasting.
+func Add(a, b *NdArray) (*NdArray, error) {
+	return applyOp(a, b, func(x, y float64) float64 { return x + y })
 }
 
-func broadcastShape(shape1, shape2 []int) []int {
-	maxLen := max(len(shape1), len(shape2))
-	resultShape := make([]int, maxLen)
-	for i := 0; i < maxLen; i++ {
-		idx1 := len(shape1) - 1 - i
-		idx2 := len(shape2) - 1 - i
-		if idx1 >= 0 && idx2 >= 0 {
-			resultShape[maxLen-1-i] = max(shape1[idx1], shape2[idx2])
-		} else if idx1 >= 0 {
-			resultShape[maxLen-1-i] = shape1[idx1]
-		} else if idx2 >= 0 {
-			resultShape[maxLen-1-i] = shape2[idx2]
-		}
-	}
-	return resultShape
+// Subtract performs element-wise subtraction with broadcasting.
+func Subtract(a, b *NdArray) (*NdArray, error) {
+	return applyOp(a, b, func(x, y float64) float64 { return x - y })
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+// Multiply performs element-wise multiplication with broadcasting.
+func Multiply(a, b *NdArray) (*NdArray, error) {
+	return applyOp(a, b, func(x, y float64) float64 { return x * y })
 }
 
-func prod(arr []int) int {
-	result := 1
-	for _, val := range arr {
-		result *= val
-	}
-	return result
-}
-
-func indicesFromFlatIndex(flatIndex int, shape []int) []int {
-	indices := make([]int, len(shape))
-	for i := len(shape) - 1; i >= 0; i-- {
-		indices[i] = flatIndex % shape[i]
-		flatIndex /= shape[i]
-	}
-	return indices
-}
-
-func indicesToFlatIndex(indices, shape []int) int {
-	var flatIndex int
-	for i := 0; i < len(shape); i++ {
-		flatIndex += indices[i] * prod(shape[i+1:])
-	}
-	return flatIndex
+// Divide performs element-wise division with broadcasting.
+func Divide(a, b *NdArray) (*NdArray, error) {
+	return applyOp(a, b, func(x, y float64) float64 { return x / y })
 }
