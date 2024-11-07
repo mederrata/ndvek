@@ -1,0 +1,2 @@
+# NDArray library for golang
+
