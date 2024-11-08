@@ -247,3 +247,16 @@ func (a *NdArray) Get(index []int) (float64, error) {
 
 	return a.data[offset], nil
 }
+
+func Linspace(start, stop float64, numPoints int) []float64 {
+	if numPoints <= 0 {
+		return nil
+	}
+
+	step := (stop - start) / float64(numPoints-1)
+	result := make([]float64, numPoints)
+	for i := 0; i < numPoints; i++ {
+		result[i] = start + float64(i)*step
+	}
+	return result
+}
