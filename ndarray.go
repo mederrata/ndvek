@@ -3,6 +3,8 @@ package ndvek
 import (
 	"errors"
 	"fmt"
+
+	"github.com/viterin/vek"
 )
 
 // NdArray represents a multi-dimensional array with shape and data.
@@ -170,27 +172,30 @@ func Zeros(shape []int) *NdArray {
 }
 
 func (a *NdArray) AddScalar(b float64) *NdArray {
-	size := ProdInt(a.shape)
-	for i := 0; i < size; i++ {
-		a.data[i] += b
+	newData := vek.AddNumber(a.data, b)
+	newVek, err := NewNdArray(a.shape, newData)
+	if err != nil {
+		panic(err)
 	}
-	return a
+	return newVek
 }
 
 func (a *NdArray) SubScalar(b float64) *NdArray {
-	size := ProdInt(a.shape)
-	for i := 0; i < size; i++ {
-		a.data[i] -= b
+	newData := vek.AddNumber(a.data, -b)
+	newVek, err := NewNdArray(a.shape, newData)
+	if err != nil {
+		panic(err)
 	}
-	return a
+	return newVek
 }
 
 func (a *NdArray) MulScalar(b float64) *NdArray {
-	size := ProdInt(a.shape)
-	for i := 0; i < size; i++ {
-		a.data[i] /= b
+	newData := vek.MulNumber(a.data, b)
+	newVek, err := NewNdArray(a.shape, newData)
+	if err != nil {
+		panic(err)
 	}
-	return a
+	return newVek
 }
 
 func (x *NdArray) InsertAxis(pos int) *NdArray {
@@ -209,9 +214,13 @@ func (x *NdArray) InsertAxis(pos int) *NdArray {
 	// Copy the remaining elements
 	copy(result[pos+1:], x.shape[pos:])
 
-	x.shape = result
+	y, err := NewNdArray(result, x.data)
 
-	return x
+	if err != nil {
+		panic(err)
+	}
+
+	return y
 }
 
 func (x *NdArray) Reshape(shape []int) *NdArray {
