@@ -10,7 +10,7 @@ import (
 // NdArray represents a multi-dimensional array with shape and data.
 type NdArray struct {
 	shape []int
-	data  []float64
+	Data  []float64
 }
 
 // NewNdArray creates a new NdArray given a shape and initial data.
@@ -22,7 +22,7 @@ func NewNdArray(shape []int, data []float64) (*NdArray, error) {
 	if size != len(data) {
 		return nil, errors.New("data length does not match shape dimensions")
 	}
-	return &NdArray{shape: shape, data: data}, nil
+	return &NdArray{shape: shape, Data: data}, nil
 }
 
 // broadcastShapes finds a broadcasted shape from two shapes.
@@ -91,9 +91,9 @@ func broadcastIndex(shape, broadcastShape []int, index int) (int, error) {
 }
 
 func (a *NdArray) ApplyHadamardOp(op func(float64) float64) error {
-	dSize := len(a.data)
+	dSize := len(a.Data)
 	for i := 0; i < dSize; i++ {
-		a.data[i] = op(a.data[i])
+		a.Data[i] = op(a.Data[i])
 	}
 	return nil
 }
@@ -112,9 +112,9 @@ func ApplyOp(a, b *NdArray, op func(float64, float64) float64) (*NdArray, error)
 	}
 	resultData := make([]float64, sizeOf)
 
-	result := &NdArray{shape: bShape, data: resultData}
+	result := &NdArray{shape: bShape, Data: resultData}
 
-	for i := 0; i < len(result.data); i++ {
+	for i := 0; i < len(result.Data); i++ {
 		aIndex, err := broadcastIndex(a.shape, bShape, i)
 		if err != nil {
 			panic(err)
@@ -123,7 +123,7 @@ func ApplyOp(a, b *NdArray, op func(float64, float64) float64) (*NdArray, error)
 		if err != nil {
 			panic(err)
 		}
-		result.data[i] = op(a.data[aIndex], b.data[bIndex])
+		result.Data[i] = op(a.Data[aIndex], b.Data[bIndex])
 	}
 	return result, nil
 }
@@ -167,12 +167,12 @@ func Zeros(shape []int) *NdArray {
 	for i := 0; i < size; i++ {
 		data[i] = 0
 	}
-	return &NdArray{shape: shape, data: data}
+	return &NdArray{shape: shape, Data: data}
 
 }
 
 func (a *NdArray) AddScalar(b float64) *NdArray {
-	newData := vek.AddNumber(a.data, b)
+	newData := vek.AddNumber(a.Data, b)
 	newVek, err := NewNdArray(a.shape, newData)
 	if err != nil {
 		panic(err)
@@ -181,7 +181,7 @@ func (a *NdArray) AddScalar(b float64) *NdArray {
 }
 
 func (a *NdArray) SubScalar(b float64) *NdArray {
-	newData := vek.AddNumber(a.data, -b)
+	newData := vek.AddNumber(a.Data, -b)
 	newVek, err := NewNdArray(a.shape, newData)
 	if err != nil {
 		panic(err)
@@ -190,7 +190,7 @@ func (a *NdArray) SubScalar(b float64) *NdArray {
 }
 
 func (a *NdArray) MulScalar(b float64) *NdArray {
-	newData := vek.MulNumber(a.data, b)
+	newData := vek.MulNumber(a.Data, b)
 	newVek, err := NewNdArray(a.shape, newData)
 	if err != nil {
 		panic(err)
@@ -214,7 +214,7 @@ func (x *NdArray) InsertAxis(pos int) *NdArray {
 	// Copy the remaining elements
 	copy(result[pos+1:], x.shape[pos:])
 
-	y, err := NewNdArray(result, x.data)
+	y, err := NewNdArray(result, x.Data)
 
 	if err != nil {
 		panic(err)
@@ -254,7 +254,7 @@ func (a *NdArray) Get(index []int) (float64, error) {
 		}
 	}
 
-	return a.data[offset], nil
+	return a.Data[offset], nil
 }
 
 func Linspace(start, stop float64, numPoints int) []float64 {

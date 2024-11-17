@@ -16,8 +16,8 @@ func TestNewNdArray(t *testing.T) {
 	if !reflect.DeepEqual(arr.Shape(), shape) {
 		t.Errorf("expected shape %v, got %v", shape, arr.Shape())
 	}
-	if !reflect.DeepEqual(arr.data, data) {
-		t.Errorf("expected data %v, got %v", data, arr.data)
+	if !reflect.DeepEqual(arr.Data, data) {
+		t.Errorf("expected data %v, got %v", data, arr.Data)
 	}
 
 	// Test shape/data mismatch error
@@ -68,8 +68,8 @@ func TestArithmeticOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !reflect.DeepEqual(result.data, expected) {
-		t.Errorf("expected %v, got %v", expected, result.data)
+	if !reflect.DeepEqual(result.Data, expected) {
+		t.Errorf("expected %v, got %v", expected, result.Data)
 	}
 
 	// Test Subtract operation
@@ -78,8 +78,8 @@ func TestArithmeticOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !reflect.DeepEqual(result.data, expected) {
-		t.Errorf("expected %v, got %v", expected, result.data)
+	if !reflect.DeepEqual(result.Data, expected) {
+		t.Errorf("expected %v, got %v", expected, result.Data)
 	}
 
 	// Test Multiply operation
@@ -88,8 +88,8 @@ func TestArithmeticOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !reflect.DeepEqual(result.data, expected) {
-		t.Errorf("expected %v, got %v", expected, result.data)
+	if !reflect.DeepEqual(result.Data, expected) {
+		t.Errorf("expected %v, got %v", expected, result.Data)
 	}
 
 	// Test Divide operation
@@ -98,7 +98,7 @@ func TestArithmeticOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !reflect.DeepEqual(result.data, expected) {
-		t.Errorf("expected %v, got %v", expected, result.data)
+	if !reflect.DeepEqual(result.Data, expected) {
+		t.Errorf("expected %v, got %v", expected, result.Data)
 	}
 }
