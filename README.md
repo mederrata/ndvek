@@ -37,6 +37,60 @@ NDVek is a high-performance Go library for multi-dimensional array operations, p
 | | `InsertAxis` | Inserts a new axis at the specified position. |
 | | `Get` | Retrieves an element at a specific index. |
 | | `Shape` | Returns the shape of the array. |
-| | `DType` | Returns the data type (`Float32` or `Float64`). |
+| | `DType` | Returns the data type (`Float32`, `Float64`, or `Bool`). |
+| **Boolean Logic** | `Eq`, `Neq` | Element-wise equality/inequality comparison (returns `Bool` array). |
+| | `Lt`, `Lte`, `Gt`, `Gte` | Element-wise comparison (returns `Bool` array). |
+| | `And`, `Or`, `Xor` | Element-wise logical operations (requires `Bool` arrays). |
+| | `Not` | Element-wise logical NOT (requires `Bool` array). |
+| | `Any`, `All` | Returns true if any/all elements are true (requires `Bool` array). |
+
+## Usage Examples
+
+### Basic Arithmetic and Broadcasting
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/mederrata/ndvek"
+)
+
+func main() {
+    // Create a 2x3 matrix
+    shape := []int{2, 3}
+    data := []float64{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}
+    arr, _ := ndvek.NewNdArray(shape, data)
+
+    // Create a scalar (broadcastable)
+    scalarArr, _ := ndvek.NewNdArray([]int{1}, []float64{10.0})
+
+    // Add scalar to every element
+    result, _ := ndvek.Add(arr, scalarArr)
+    
+    // Result is still 2x3
+    // [11.0, 12.0, 13.0]
+    // [14.0, 15.0, 16.0]
+    fmt.Println(result.Mean()) // 13.5
+}
+```
+
+### Boolean Logic
+
+```go
+// Create two arrays
+a, _ := ndvek.NewNdArray([]int{4}, []float64{1, 2, 3, 4})
+b, _ := ndvek.NewNdArray([]int{4}, []float64{2, 2, 2, 2})
+
+// Compare them
+// Lt: [1<2, 2<2, 3<2, 4<2] -> [T, F, F, F]
+lt, _ := ndvek.Lt(a, b) 
+
+// Check if any element is true
+fmt.Println(lt.Any()) // true
+```
+
+> **Note**: For more comprehensive examples, please refer to the `ndarray_test.go` file in the source code.
+
 
 

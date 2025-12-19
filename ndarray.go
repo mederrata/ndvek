@@ -13,12 +13,13 @@ type DType int
 const (
 	Float64 DType = iota
 	Float32
+	Bool
 )
 
 // NdArray represents a multi-dimensional array with shape and data.
 type NdArray struct {
 	shape []int
-	Data  any // []float64 or []float32
+	Data  any // []float64, []float32, or []bool
 	dtype DType
 }
 
@@ -27,9 +28,7 @@ func (a *NdArray) DType() DType {
 }
 
 // NewNdArray creates a new NdArray given a shape and initial data.
-// Data can be []float64 or []float32.
-// NewNdArray creates a new NdArray given a shape and initial data.
-// Data can be []float64 or []float32.
+// Data can be []float64, []float32, or []bool.
 func NewNdArray(shape []int, data any) (*NdArray, error) {
 	size := 1
 	for _, dim := range shape {
@@ -49,6 +48,11 @@ func NewNdArray(shape []int, data any) (*NdArray, error) {
 			return nil, errors.New("data length does not match shape dimensions")
 		}
 		dtype = Float32
+	case []bool:
+		if size != len(v) {
+			return nil, errors.New("data length does not match shape dimensions")
+		}
+		dtype = Bool
 	default:
 		return nil, errors.New("unsupported data type")
 	}
@@ -519,6 +523,227 @@ func (a *NdArray) Ceil() *NdArray {
 		return &NdArray{shape: a.shape, Data: vek32.Ceil(a.Data.([]float32)), dtype: Float32}
 	}
 	return &NdArray{shape: a.shape, Data: vek.Ceil(a.dataAsFloat64()), dtype: Float64}
+}
+
+// Eq performs element-wise equality comparison.
+func Eq(a, b *NdArray) (*NdArray, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		// TODO: Implement broadcasting for boolean ops
+		return nil, errors.New("broadcasting not yet supported for boolean ops")
+	}
+	size := ProdInt(a.shape)
+	data := make([]bool, size)
+
+	if a.dtype == Float64 && b.dtype == Float64 {
+		vek.Eq_Into(data, a.Data.([]float64), b.Data.([]float64))
+	} else if a.dtype == Float32 && b.dtype == Float32 {
+		vek32.Eq_Into(data, a.Data.([]float32), b.Data.([]float32))
+	} else if a.dtype == Bool && b.dtype == Bool {
+		// vek does not have Eq for bools, do manual
+		aData := a.Data.([]bool)
+		bData := b.Data.([]bool)
+		for i := 0; i < size; i++ {
+			data[i] = aData[i] == bData[i]
+		}
+	} else {
+		// Mixed types or other combinations - convert to float64 for comparison?
+		// Or strictly enforce types? Let's convert to float64 for numbers.
+		if a.dtype != Bool && b.dtype != Bool {
+			vek.Eq_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+		} else {
+			return nil, errors.New("cannot compare boolean with numeric type")
+		}
+	}
+	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+}
+
+// Neq performs element-wise non-equality comparison.
+func Neq(a, b *NdArray) (*NdArray, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return nil, errors.New("broadcasting not yet supported for boolean ops")
+	}
+	size := ProdInt(a.shape)
+	data := make([]bool, size)
+
+	if a.dtype == Float64 && b.dtype == Float64 {
+		vek.Neq_Into(data, a.Data.([]float64), b.Data.([]float64))
+	} else if a.dtype == Float32 && b.dtype == Float32 {
+		vek32.Neq_Into(data, a.Data.([]float32), b.Data.([]float32))
+	} else if a.dtype == Bool && b.dtype == Bool {
+		aData := a.Data.([]bool)
+		bData := b.Data.([]bool)
+		for i := 0; i < size; i++ {
+			data[i] = aData[i] != bData[i]
+		}
+	} else {
+		if a.dtype != Bool && b.dtype != Bool {
+			vek.Neq_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+		} else {
+			return nil, errors.New("cannot compare boolean with numeric type")
+		}
+	}
+	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+}
+
+// Lt performs element-wise less than comparison.
+func Lt(a, b *NdArray) (*NdArray, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return nil, errors.New("broadcasting not yet supported for boolean ops")
+	}
+	size := ProdInt(a.shape)
+	data := make([]bool, size)
+
+	if a.dtype == Float64 && b.dtype == Float64 {
+		vek.Lt_Into(data, a.Data.([]float64), b.Data.([]float64))
+	} else if a.dtype == Float32 && b.dtype == Float32 {
+		vek32.Lt_Into(data, a.Data.([]float32), b.Data.([]float32))
+	} else {
+		if a.dtype != Bool && b.dtype != Bool {
+			vek.Lt_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+		} else {
+			return nil, errors.New("cannot compare boolean with numeric type")
+		}
+	}
+	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+}
+
+// Lte performs element-wise less than or equal comparison.
+func Lte(a, b *NdArray) (*NdArray, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return nil, errors.New("broadcasting not yet supported for boolean ops")
+	}
+	size := ProdInt(a.shape)
+	data := make([]bool, size)
+
+	if a.dtype == Float64 && b.dtype == Float64 {
+		vek.Lte_Into(data, a.Data.([]float64), b.Data.([]float64))
+	} else if a.dtype == Float32 && b.dtype == Float32 {
+		vek32.Lte_Into(data, a.Data.([]float32), b.Data.([]float32))
+	} else {
+		if a.dtype != Bool && b.dtype != Bool {
+			vek.Lte_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+		} else {
+			return nil, errors.New("cannot compare boolean with numeric type")
+		}
+	}
+	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+}
+
+// Gt performs element-wise greater than comparison.
+func Gt(a, b *NdArray) (*NdArray, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return nil, errors.New("broadcasting not yet supported for boolean ops")
+	}
+	size := ProdInt(a.shape)
+	data := make([]bool, size)
+
+	if a.dtype == Float64 && b.dtype == Float64 {
+		vek.Gt_Into(data, a.Data.([]float64), b.Data.([]float64))
+	} else if a.dtype == Float32 && b.dtype == Float32 {
+		vek32.Gt_Into(data, a.Data.([]float32), b.Data.([]float32))
+	} else {
+		if a.dtype != Bool && b.dtype != Bool {
+			vek.Gt_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+		} else {
+			return nil, errors.New("cannot compare boolean with numeric type")
+		}
+	}
+	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+}
+
+// Gte performs element-wise greater than or equal comparison.
+func Gte(a, b *NdArray) (*NdArray, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return nil, errors.New("broadcasting not yet supported for boolean ops")
+	}
+	size := ProdInt(a.shape)
+	data := make([]bool, size)
+
+	if a.dtype == Float64 && b.dtype == Float64 {
+		vek.Gte_Into(data, a.Data.([]float64), b.Data.([]float64))
+	} else if a.dtype == Float32 && b.dtype == Float32 {
+		vek32.Gte_Into(data, a.Data.([]float32), b.Data.([]float32))
+	} else {
+		if a.dtype != Bool && b.dtype != Bool {
+			vek.Gte_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+		} else {
+			return nil, errors.New("cannot compare boolean with numeric type")
+		}
+	}
+	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+}
+
+// And performs element-wise logical AND.
+func And(a, b *NdArray) (*NdArray, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return nil, errors.New("broadcasting not yet supported for boolean ops")
+	}
+	if a.dtype != Bool || b.dtype != Bool {
+		return nil, errors.New("logical operations require boolean arrays")
+	}
+
+	size := ProdInt(a.shape)
+	data := make([]bool, size)
+	vek.And_Into(data, a.Data.([]bool), b.Data.([]bool))
+	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+}
+
+// Or performs element-wise logical OR.
+func Or(a, b *NdArray) (*NdArray, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return nil, errors.New("broadcasting not yet supported for boolean ops")
+	}
+	if a.dtype != Bool || b.dtype != Bool {
+		return nil, errors.New("logical operations require boolean arrays")
+	}
+
+	size := ProdInt(a.shape)
+	data := make([]bool, size)
+	vek.Or_Into(data, a.Data.([]bool), b.Data.([]bool))
+	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+}
+
+// Xor performs element-wise logical XOR.
+func Xor(a, b *NdArray) (*NdArray, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return nil, errors.New("broadcasting not yet supported for boolean ops")
+	}
+	if a.dtype != Bool || b.dtype != Bool {
+		return nil, errors.New("logical operations require boolean arrays")
+	}
+
+	size := ProdInt(a.shape)
+	data := make([]bool, size)
+	vek.Xor_Into(data, a.Data.([]bool), b.Data.([]bool))
+	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+}
+
+// Not performs element-wise logical NOT.
+func (a *NdArray) Not() *NdArray {
+	if a.dtype != Bool {
+		panic("logical operations require boolean arrays")
+	}
+	size := ProdInt(a.shape)
+	data := make([]bool, size)
+	vek.Not_Into(data, a.Data.([]bool))
+	return &NdArray{shape: a.shape, Data: data, dtype: Bool}
+}
+
+// Any returns true if any element is true.
+func (a *NdArray) Any() bool {
+	if a.dtype != Bool {
+		// Or convert to bool? For now strict.
+		panic("logical operations require boolean arrays")
+	}
+	return vek.Any(a.Data.([]bool))
+}
+
+// All returns true if all elements are true.
+func (a *NdArray) All() bool {
+	if a.dtype != Bool {
+		panic("logical operations require boolean arrays")
+	}
+	return vek.All(a.Data.([]bool))
 }
 
 func shapesEqual(a, b []int) bool {
