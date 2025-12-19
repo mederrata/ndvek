@@ -269,3 +269,79 @@ func TestVekExtensions(t *testing.T) {
 		t.Errorf("Ceil: expected %v, got %v", expected, ceilRes.Data)
 	}
 }
+
+func TestBooleanOperations(t *testing.T) {
+	// Create Bool array
+	boolData := []bool{true, false, true, false}
+	a, _ := NewNdArray([]int{4}, boolData)
+	if a.DType() != Bool {
+		t.Errorf("Expected Bool dtype")
+	}
+
+	// Not
+	notA := a.Not()
+	expectedNot := []bool{false, true, false, true}
+	if !reflect.DeepEqual(notA.Data, expectedNot) {
+		t.Errorf("Not: expected %v, got %v", expectedNot, notA.Data)
+	}
+
+	// And
+	bData := []bool{true, true, false, false}
+	b, _ := NewNdArray([]int{4}, bData)
+	andRes, _ := And(a, b)
+	expectedAnd := []bool{true, false, false, false}
+	if !reflect.DeepEqual(andRes.Data, expectedAnd) {
+		t.Errorf("And: expected %v, got %v", expectedAnd, andRes.Data)
+	}
+
+	// Or
+	orRes, _ := Or(a, b)
+	expectedOr := []bool{true, true, true, false}
+	if !reflect.DeepEqual(orRes.Data, expectedOr) {
+		t.Errorf("Or: expected %v, got %v", expectedOr, orRes.Data)
+	}
+
+	// Xor
+	xorRes, _ := Xor(a, b)
+	expectedXor := []bool{false, true, true, false}
+	if !reflect.DeepEqual(xorRes.Data, expectedXor) {
+		t.Errorf("Xor: expected %v, got %v", expectedXor, xorRes.Data)
+	}
+
+	// Any / All
+	if !a.Any() {
+		t.Error("Any: expected true")
+	}
+	if a.All() {
+		t.Error("All: expected false")
+	}
+	c, _ := NewNdArray([]int{2}, []bool{true, true})
+	if !c.All() {
+		t.Error("All: expected true")
+	}
+
+	// Comparisons
+	f1, _ := NewNdArray([]int{4}, []float64{1, 2, 3, 4})
+	f2, _ := NewNdArray([]int{4}, []float64{1, 2, 4, 3})
+
+	// Eq
+	eqRes, _ := Eq(f1, f2)
+	expectedEq := []bool{true, true, false, false}
+	if !reflect.DeepEqual(eqRes.Data, expectedEq) {
+		t.Errorf("Eq: expected %v, got %v", expectedEq, eqRes.Data)
+	}
+
+	// Lt
+	ltRes, _ := Lt(f1, f2)
+	expectedLt := []bool{false, false, true, false}
+	if !reflect.DeepEqual(ltRes.Data, expectedLt) {
+		t.Errorf("Lt: expected %v, got %v", expectedLt, ltRes.Data)
+	}
+
+	// Gt
+	gtRes, _ := Gt(f1, f2)
+	expectedGt := []bool{false, false, false, true}
+	if !reflect.DeepEqual(gtRes.Data, expectedGt) {
+		t.Errorf("Gt: expected %v, got %v", expectedGt, gtRes.Data)
+	}
+}
