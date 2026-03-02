@@ -3,6 +3,8 @@ package ndvek
 import (
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 
 	"github.com/viterin/vek"
 	"github.com/viterin/vek/vek32"
@@ -19,12 +21,36 @@ const (
 // NdArray represents a multi-dimensional array with shape and data.
 type NdArray struct {
 	shape []int
-	Data  any // []float64, []float32, or []bool
+	data  any // []float64, []float32, or []bool
 	dtype DType
 }
 
 func (a *NdArray) DType() DType {
 	return a.dtype
+}
+
+// Float64Data returns the underlying []float64 data, or nil if the dtype is not Float64.
+func (a *NdArray) Float64Data() []float64 {
+	if a.dtype == Float64 {
+		return a.data.([]float64)
+	}
+	return nil
+}
+
+// Float32Data returns the underlying []float32 data, or nil if the dtype is not Float32.
+func (a *NdArray) Float32Data() []float32 {
+	if a.dtype == Float32 {
+		return a.data.([]float32)
+	}
+	return nil
+}
+
+// BoolData returns the underlying []bool data, or nil if the dtype is not Bool.
+func (a *NdArray) BoolData() []bool {
+	if a.dtype == Bool {
+		return a.data.([]bool)
+	}
+	return nil
 }
 
 // NewNdArray creates a new NdArray given a shape and initial data.
@@ -34,6 +60,9 @@ func NewNdArray(shape []int, data any) (*NdArray, error) {
 	for _, dim := range shape {
 		size *= dim
 	}
+
+	shapeCopy := make([]int, len(shape))
+	copy(shapeCopy, shape)
 
 	var dtype DType
 
@@ -57,7 +86,7 @@ func NewNdArray(shape []int, data any) (*NdArray, error) {
 		return nil, errors.New("unsupported data type")
 	}
 
-	return &NdArray{shape: shape, Data: data, dtype: dtype}, nil
+	return &NdArray{shape: shapeCopy, data: data, dtype: dtype}, nil
 }
 
 // broadcastShapes finds a broadcasted shape from two shapes.
@@ -66,7 +95,7 @@ func broadcastShapes(shape1, shape2 []int) ([]int, error) {
 	maxLen := max(len2, len1)
 	broadcastedShape := make([]int, maxLen)
 
-	for i := 0; i < maxLen; i++ {
+	for i := range maxLen {
 		dim1, dim2 := 1, 1
 		if i < len1 {
 			dim1 = shape1[len1-1-i]
@@ -84,33 +113,27 @@ func broadcastShapes(shape1, shape2 []int) ([]int, error) {
 
 // broadcastIndex converts a single index to the correct offset for broadcasting.
 func broadcastIndex(shape, broadcastShape []int, index int) (int, error) {
-	// Check dimensions match broadcasting rules
 	if len(shape) > len(broadcastShape) {
 		return 0, errors.New("original shape cannot be larger than broadcast shape")
 	}
 
-	// Initialize result index in original array
 	originalIndex := 0
 	stride := 1
 
-	// Traverse from last dimension to first to handle broadcasting correctly
 	for i := len(broadcastShape) - 1; i >= 0; i-- {
 		broadcastDim := broadcastShape[i]
-		shapeDim := 1 // Assume a broadcasted dimension
+		shapeDim := 1
 		if i-len(broadcastShape)+len(shape) >= 0 {
 			shapeDim = shape[i-len(broadcastShape)+len(shape)]
 		}
 
-		// Current coordinate along this dimension in the broadcasted array
 		currentCoord := index % broadcastDim
 		index /= broadcastDim
 
-		// Map the coordinate to the original shape (if broadcasted, use 0)
 		if shapeDim != broadcastDim && shapeDim == 1 {
 			currentCoord = 0
 		}
 
-		// Calculate the corresponding index in the original array
 		originalIndex += currentCoord * stride
 		stride *= shapeDim
 	}
@@ -119,52 +142,56 @@ func broadcastIndex(shape, broadcastShape []int, index int) (int, error) {
 }
 
 func (a *NdArray) ApplyHadamardOp(op func(float64) float64) error {
+	if a.dtype == Bool {
+		return errors.New("ApplyHadamardOp not supported for Bool arrays")
+	}
 	if a.dtype == Float32 {
-		// Promote to Float64
-		f32Data := a.Data.([]float32)
+		f32Data := a.data.([]float32)
 		f64Data := make([]float64, len(f32Data))
 		for i, v := range f32Data {
 			f64Data[i] = op(float64(v))
 		}
-		a.Data = f64Data
+		a.data = f64Data
 		a.dtype = Float64
 		return nil
 	}
 
-	dSize := len(a.Data.([]float64))
-	d := a.Data.([]float64)
-	for i := range dSize {
+	d := a.data.([]float64)
+	for i := range d {
 		d[i] = op(d[i])
 	}
 	return nil
 }
 
 // ApplyOp applies an arithmetic operation with broadcasting.
-// Note: This always returns a Float64 array because op returns float64.
+// Returns a Float64 array because op returns float64.
 func ApplyOp(a, b *NdArray, op func(float64, float64) float64) (*NdArray, error) {
 	bShape, err := broadcastShapes(a.shape, b.shape)
 	if err != nil {
 		return nil, err
 	}
 
-	sizeOf := 1
-	for _, dim := range bShape {
-		sizeOf *= dim
-	}
+	sizeOf := ProdInt(bShape)
 	resultData := make([]float64, sizeOf)
-	result := &NdArray{shape: bShape, Data: resultData, dtype: Float64}
+	result := &NdArray{shape: bShape, data: resultData, dtype: Float64}
 
-	aData := a.dataAsFloat64()
-	bData := b.dataAsFloat64()
+	aData, err := a.toFloat64()
+	if err != nil {
+		return nil, err
+	}
+	bData, err := b.toFloat64()
+	if err != nil {
+		return nil, err
+	}
 
 	for i := range resultData {
 		aIndex, err := broadcastIndex(a.shape, bShape, i)
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 		bIndex, err := broadcastIndex(b.shape, bShape, i)
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 		resultData[i] = op(aData[aIndex], bData[bIndex])
 	}
@@ -175,26 +202,23 @@ func ApplyOp(a, b *NdArray, op func(float64, float64) float64) (*NdArray, error)
 func Add(a, b *NdArray) (*NdArray, error) {
 	if shapesEqual(a.shape, b.shape) {
 		if a.dtype == Float32 && b.dtype == Float32 {
-			return &NdArray{shape: a.shape, Data: vek32.Add(a.Data.([]float32), b.Data.([]float32)), dtype: Float32}, nil
+			return &NdArray{shape: a.shape, data: vek32.Add(a.data.([]float32), b.data.([]float32)), dtype: Float32}, nil
 		}
-		return &NdArray{shape: a.shape, Data: vek.Add(a.dataAsFloat64(), b.dataAsFloat64()), dtype: Float64}, nil
+		return &NdArray{shape: a.shape, data: vek.Add(a.mustFloat64(), b.mustFloat64()), dtype: Float64}, nil
 	}
 	if ProdInt(b.shape) == 1 {
-		bVal, _ := b.Get([]int{0}) // Get works for both types and returns float64
+		bVal, _ := b.Get([]int{0})
 		if a.dtype == Float32 && b.dtype == Float32 {
-			// If b was effectively float32 (it is if dtype is float32), we can keep result as float32
-			// vek32.AddNumber
-			return &NdArray{shape: a.shape, Data: vek32.AddNumber(a.Data.([]float32), float32(bVal)), dtype: Float32}, nil
+			return &NdArray{shape: a.shape, data: vek32.AddNumber(a.data.([]float32), float32(bVal)), dtype: Float32}, nil
 		}
-		// If b is Float64, promote a to Float64
-		return &NdArray{shape: a.shape, Data: vek.AddNumber(a.dataAsFloat64(), bVal), dtype: Float64}, nil
+		return &NdArray{shape: a.shape, data: vek.AddNumber(a.mustFloat64(), bVal), dtype: Float64}, nil
 	}
 	if ProdInt(a.shape) == 1 {
 		aVal, _ := a.Get([]int{0})
 		if a.dtype == Float32 && b.dtype == Float32 {
-			return &NdArray{shape: b.shape, Data: vek32.AddNumber(b.Data.([]float32), float32(aVal)), dtype: Float32}, nil
+			return &NdArray{shape: b.shape, data: vek32.AddNumber(b.data.([]float32), float32(aVal)), dtype: Float32}, nil
 		}
-		return &NdArray{shape: b.shape, Data: vek.AddNumber(b.dataAsFloat64(), aVal), dtype: Float64}, nil
+		return &NdArray{shape: b.shape, data: vek.AddNumber(b.mustFloat64(), aVal), dtype: Float64}, nil
 	}
 	return ApplyOp(a, b, func(x, y float64) float64 { return x + y })
 }
@@ -203,26 +227,25 @@ func Add(a, b *NdArray) (*NdArray, error) {
 func Subtract(a, b *NdArray) (*NdArray, error) {
 	if shapesEqual(a.shape, b.shape) {
 		if a.dtype == Float32 && b.dtype == Float32 {
-			return &NdArray{shape: a.shape, Data: vek32.Sub(a.Data.([]float32), b.Data.([]float32)), dtype: Float32}, nil
+			return &NdArray{shape: a.shape, data: vek32.Sub(a.data.([]float32), b.data.([]float32)), dtype: Float32}, nil
 		}
-		return &NdArray{shape: a.shape, Data: vek.Sub(a.dataAsFloat64(), b.dataAsFloat64()), dtype: Float64}, nil
+		return &NdArray{shape: a.shape, data: vek.Sub(a.mustFloat64(), b.mustFloat64()), dtype: Float64}, nil
 	}
 	if ProdInt(b.shape) == 1 {
 		bVal, _ := b.Get([]int{0})
 		if a.dtype == Float32 && b.dtype == Float32 {
-			return &NdArray{shape: a.shape, Data: vek32.SubNumber(a.Data.([]float32), float32(bVal)), dtype: Float32}, nil
+			return &NdArray{shape: a.shape, data: vek32.SubNumber(a.data.([]float32), float32(bVal)), dtype: Float32}, nil
 		}
-		return &NdArray{shape: a.shape, Data: vek.SubNumber(a.dataAsFloat64(), bVal), dtype: Float64}, nil
+		return &NdArray{shape: a.shape, data: vek.SubNumber(a.mustFloat64(), bVal), dtype: Float64}, nil
 	}
 	if ProdInt(a.shape) == 1 {
 		aVal, _ := a.Get([]int{0})
 		if a.dtype == Float32 && b.dtype == Float32 {
-			diff := vek32.SubNumber(b.Data.([]float32), float32(aVal))
-			return &NdArray{shape: b.shape, Data: vek32.MulNumber(diff, -1), dtype: Float32}, nil
+			diff := vek32.SubNumber(b.data.([]float32), float32(aVal))
+			return &NdArray{shape: b.shape, data: vek32.MulNumber(diff, -1), dtype: Float32}, nil
 		}
-		// a - b = -(b - a)
-		diff := vek.SubNumber(b.dataAsFloat64(), aVal)
-		return &NdArray{shape: b.shape, Data: vek.MulNumber(diff, -1), dtype: Float64}, nil
+		diff := vek.SubNumber(b.mustFloat64(), aVal)
+		return &NdArray{shape: b.shape, data: vek.MulNumber(diff, -1), dtype: Float64}, nil
 	}
 	return ApplyOp(a, b, func(x, y float64) float64 { return x - y })
 }
@@ -231,23 +254,23 @@ func Subtract(a, b *NdArray) (*NdArray, error) {
 func Multiply(a, b *NdArray) (*NdArray, error) {
 	if shapesEqual(a.shape, b.shape) {
 		if a.dtype == Float32 && b.dtype == Float32 {
-			return &NdArray{shape: a.shape, Data: vek32.Mul(a.Data.([]float32), b.Data.([]float32)), dtype: Float32}, nil
+			return &NdArray{shape: a.shape, data: vek32.Mul(a.data.([]float32), b.data.([]float32)), dtype: Float32}, nil
 		}
-		return &NdArray{shape: a.shape, Data: vek.Mul(a.dataAsFloat64(), b.dataAsFloat64()), dtype: Float64}, nil
+		return &NdArray{shape: a.shape, data: vek.Mul(a.mustFloat64(), b.mustFloat64()), dtype: Float64}, nil
 	}
 	if ProdInt(b.shape) == 1 {
 		bVal, _ := b.Get([]int{0})
 		if a.dtype == Float32 && b.dtype == Float32 {
-			return &NdArray{shape: a.shape, Data: vek32.MulNumber(a.Data.([]float32), float32(bVal)), dtype: Float32}, nil
+			return &NdArray{shape: a.shape, data: vek32.MulNumber(a.data.([]float32), float32(bVal)), dtype: Float32}, nil
 		}
-		return &NdArray{shape: a.shape, Data: vek.MulNumber(a.dataAsFloat64(), bVal), dtype: Float64}, nil
+		return &NdArray{shape: a.shape, data: vek.MulNumber(a.mustFloat64(), bVal), dtype: Float64}, nil
 	}
 	if ProdInt(a.shape) == 1 {
 		aVal, _ := a.Get([]int{0})
 		if a.dtype == Float32 && b.dtype == Float32 {
-			return &NdArray{shape: b.shape, Data: vek32.MulNumber(b.Data.([]float32), float32(aVal)), dtype: Float32}, nil
+			return &NdArray{shape: b.shape, data: vek32.MulNumber(b.data.([]float32), float32(aVal)), dtype: Float32}, nil
 		}
-		return &NdArray{shape: b.shape, Data: vek.MulNumber(b.dataAsFloat64(), aVal), dtype: Float64}, nil
+		return &NdArray{shape: b.shape, data: vek.MulNumber(b.mustFloat64(), aVal), dtype: Float64}, nil
 	}
 	return ApplyOp(a, b, func(x, y float64) float64 { return x * y })
 }
@@ -256,28 +279,60 @@ func Multiply(a, b *NdArray) (*NdArray, error) {
 func Divide(a, b *NdArray) (*NdArray, error) {
 	if shapesEqual(a.shape, b.shape) {
 		if a.dtype == Float32 && b.dtype == Float32 {
-			return &NdArray{shape: a.shape, Data: vek32.Div(a.Data.([]float32), b.Data.([]float32)), dtype: Float32}, nil
+			return &NdArray{shape: a.shape, data: vek32.Div(a.data.([]float32), b.data.([]float32)), dtype: Float32}, nil
 		}
-		return &NdArray{shape: a.shape, Data: vek.Div(a.dataAsFloat64(), b.dataAsFloat64()), dtype: Float64}, nil
+		return &NdArray{shape: a.shape, data: vek.Div(a.mustFloat64(), b.mustFloat64()), dtype: Float64}, nil
 	}
 	if ProdInt(b.shape) == 1 {
 		bVal, _ := b.Get([]int{0})
 		if a.dtype == Float32 && b.dtype == Float32 {
-			return &NdArray{shape: a.shape, Data: vek32.DivNumber(a.Data.([]float32), float32(bVal)), dtype: Float32}, nil
+			return &NdArray{shape: a.shape, data: vek32.DivNumber(a.data.([]float32), float32(bVal)), dtype: Float32}, nil
 		}
-		return &NdArray{shape: a.shape, Data: vek.DivNumber(a.dataAsFloat64(), bVal), dtype: Float64}, nil
+		return &NdArray{shape: a.shape, data: vek.DivNumber(a.mustFloat64(), bVal), dtype: Float64}, nil
 	}
 	if ProdInt(a.shape) == 1 {
 		aVal, _ := a.Get([]int{0})
 		if a.dtype == Float32 && b.dtype == Float32 {
-			inv := vek32.Inv(b.Data.([]float32))
-			return &NdArray{shape: b.shape, Data: vek32.MulNumber(inv, float32(aVal)), dtype: Float32}, nil
+			inv := vek32.Inv(b.data.([]float32))
+			return &NdArray{shape: b.shape, data: vek32.MulNumber(inv, float32(aVal)), dtype: Float32}, nil
 		}
-		// a / b = a * (1/b)
-		inv := vek.Inv(b.dataAsFloat64())
-		return &NdArray{shape: b.shape, Data: vek.MulNumber(inv, aVal), dtype: Float64}, nil
+		inv := vek.Inv(b.mustFloat64())
+		return &NdArray{shape: b.shape, data: vek.MulNumber(inv, aVal), dtype: Float64}, nil
 	}
 	return ApplyOp(a, b, func(x, y float64) float64 { return x / y })
+}
+
+// Pow performs element-wise exponentiation with broadcasting.
+func Pow(a, b *NdArray) (*NdArray, error) {
+	if shapesEqual(a.shape, b.shape) {
+		if a.dtype == Float32 && b.dtype == Float32 {
+			return &NdArray{shape: a.shape, data: vek32.Pow(a.data.([]float32), b.data.([]float32)), dtype: Float32}, nil
+		}
+		return &NdArray{shape: a.shape, data: vek.Pow(a.mustFloat64(), b.mustFloat64()), dtype: Float64}, nil
+	}
+	return ApplyOp(a, b, func(x, y float64) float64 { return math.Pow(x, y) })
+}
+
+// Minimum performs element-wise minimum.
+func Minimum(a, b *NdArray) (*NdArray, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return nil, errors.New("shapes must be equal for Minimum")
+	}
+	if a.dtype == Float32 && b.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Minimum(a.data.([]float32), b.data.([]float32)), dtype: Float32}, nil
+	}
+	return &NdArray{shape: a.shape, data: vek.Minimum(a.mustFloat64(), b.mustFloat64()), dtype: Float64}, nil
+}
+
+// Maximum performs element-wise maximum.
+func Maximum(a, b *NdArray) (*NdArray, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return nil, errors.New("shapes must be equal for Maximum")
+	}
+	if a.dtype == Float32 && b.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Maximum(a.data.([]float32), b.data.([]float32)), dtype: Float32}, nil
+	}
+	return &NdArray{shape: a.shape, data: vek.Maximum(a.mustFloat64(), b.mustFloat64()), dtype: Float64}, nil
 }
 
 // Shape returns the shape of the ndarray.
@@ -296,106 +351,106 @@ func ProdInt(x []int) int {
 func Zeros(shape []int) *NdArray {
 	size := ProdInt(shape)
 	data := make([]float64, size)
-	return &NdArray{shape: shape, Data: data}
+	shapeCopy := make([]int, len(shape))
+	copy(shapeCopy, shape)
+	return &NdArray{shape: shapeCopy, data: data, dtype: Float64}
+}
 
+// Ones creates a new float64 NdArray filled with ones.
+func Ones(shape []int) *NdArray {
+	size := ProdInt(shape)
+	data := vek.Ones(size)
+	shapeCopy := make([]int, len(shape))
+	copy(shapeCopy, shape)
+	return &NdArray{shape: shapeCopy, data: data, dtype: Float64}
 }
 
 func (a *NdArray) AddScalar(b float64) *NdArray {
 	if a.dtype == Float32 {
-		newData := vek32.AddNumber(a.Data.([]float32), float32(b))
-		return &NdArray{shape: a.shape, Data: newData, dtype: Float32}
+		return &NdArray{shape: a.shape, data: vek32.AddNumber(a.data.([]float32), float32(b)), dtype: Float32}
 	}
-	newData := vek.AddNumber(a.dataAsFloat64(), b)
-	return &NdArray{shape: a.shape, Data: newData, dtype: Float64}
+	return &NdArray{shape: a.shape, data: vek.AddNumber(a.mustFloat64(), b), dtype: Float64}
 }
 
 func (a *NdArray) SubScalar(b float64) *NdArray {
 	if a.dtype == Float32 {
-		newData := vek32.AddNumber(a.Data.([]float32), -float32(b))
-		return &NdArray{shape: a.shape, Data: newData, dtype: Float32}
+		return &NdArray{shape: a.shape, data: vek32.SubNumber(a.data.([]float32), float32(b)), dtype: Float32}
 	}
-	newData := vek.AddNumber(a.dataAsFloat64(), -b)
-	return &NdArray{shape: a.shape, Data: newData, dtype: Float64}
+	return &NdArray{shape: a.shape, data: vek.SubNumber(a.mustFloat64(), b), dtype: Float64}
 }
 
 func (a *NdArray) MulScalar(b float64) *NdArray {
 	if a.dtype == Float32 {
-		newData := vek32.MulNumber(a.Data.([]float32), float32(b))
-		return &NdArray{shape: a.shape, Data: newData, dtype: Float32}
+		return &NdArray{shape: a.shape, data: vek32.MulNumber(a.data.([]float32), float32(b)), dtype: Float32}
 	}
-	newData := vek.MulNumber(a.dataAsFloat64(), b)
-	return &NdArray{shape: a.shape, Data: newData, dtype: Float64}
+	return &NdArray{shape: a.shape, data: vek.MulNumber(a.mustFloat64(), b), dtype: Float64}
 }
 
 func (a *NdArray) DivScalar(b float64) *NdArray {
 	if a.dtype == Float32 {
-		newData := vek32.DivNumber(a.Data.([]float32), float32(b))
-		return &NdArray{shape: a.shape, Data: newData, dtype: Float32}
+		return &NdArray{shape: a.shape, data: vek32.DivNumber(a.data.([]float32), float32(b)), dtype: Float32}
 	}
-	newData := vek.DivNumber(a.dataAsFloat64(), b)
-	return &NdArray{shape: a.shape, Data: newData, dtype: Float64}
+	return &NdArray{shape: a.shape, data: vek.DivNumber(a.mustFloat64(), b), dtype: Float64}
 }
 
-func (x *NdArray) InsertAxis(pos int) *NdArray {
+func (x *NdArray) InsertAxis(pos int) (*NdArray, error) {
 	rank := len(x.shape)
 	if pos < 0 {
 		pos += rank + 1
 	}
 
 	result := make([]int, rank+1)
-
 	copy(result[:pos], (x.shape)[:pos])
-
-	// Insert the new value
 	result[pos] = 1
-
-	// Copy the remaining elements
 	copy(result[pos+1:], x.shape[pos:])
 
-	y, err := NewNdArray(result, x.Data)
+	return NewNdArray(result, x.data)
+}
 
+func (x *NdArray) Reshape(shape []int) (*NdArray, error) {
+	if ProdInt(shape) != ProdInt(x.shape) {
+		return nil, fmt.Errorf("cannot reshape array of size %d into shape %v (size %d)", ProdInt(x.shape), shape, ProdInt(shape))
+	}
+	shapeCopy := make([]int, len(shape))
+	copy(shapeCopy, shape)
+	x.shape = shapeCopy
+	return x, nil
+}
+
+// toFloat64 converts numeric data to []float64, returning an error for Bool arrays.
+func (a *NdArray) toFloat64() ([]float64, error) {
+	switch a.dtype {
+	case Float64:
+		return a.data.([]float64), nil
+	case Float32:
+		return vek.FromFloat32(a.data.([]float32)), nil
+	default:
+		return nil, errors.New("cannot convert Bool array to float64")
+	}
+}
+
+// mustFloat64 converts numeric data to []float64. Panics on Bool arrays.
+// Use only in code paths where dtype has already been checked.
+func (a *NdArray) mustFloat64() []float64 {
+	d, err := a.toFloat64()
 	if err != nil {
 		panic(err)
 	}
-
-	return y
+	return d
 }
 
-func (x *NdArray) Reshape(shape []int) *NdArray {
-	if !(ProdInt(shape) == ProdInt(x.shape)) {
-		return nil
+func (a *NdArray) toFloat32() ([]float32, error) {
+	switch a.dtype {
+	case Float32:
+		return a.data.([]float32), nil
+	case Float64:
+		return vek.ToFloat32(a.data.([]float64)), nil
+	default:
+		return nil, errors.New("cannot convert Bool array to float32")
 	}
-	x.shape = shape
-	return x
-}
-func (a *NdArray) dataAsFloat64() []float64 {
-	if a.dtype == Float64 {
-		return a.Data.([]float64)
-	}
-	// Convert Float32 to Float64
-	f32Data := a.Data.([]float32)
-	f64Data := make([]float64, len(f32Data))
-	for i, v := range f32Data {
-		f64Data[i] = float64(v)
-	}
-	return f64Data
-}
-
-func (a *NdArray) dataAsFloat32() []float32 {
-	if a.dtype == Float32 {
-		return a.Data.([]float32)
-	}
-	// Convert Float64 to Float32
-	f64Data := a.Data.([]float64)
-	f32Data := make([]float32, len(f64Data))
-	for i, v := range f64Data {
-		f32Data[i] = float32(v)
-	}
-	return f32Data
 }
 
 func (a *NdArray) Get(index []int) (float64, error) {
-	// Check if the index length matches the number of dimensions
 	if len(index) != len(a.shape) {
 		return 0, errors.New("index length does not match array dimensions")
 	}
@@ -408,15 +463,22 @@ func (a *NdArray) Get(index []int) (float64, error) {
 		offset = offset*a.shape[i] + coord
 	}
 
-	if a.dtype == Float64 {
-		return a.Data.([]float64)[offset], nil
+	switch a.dtype {
+	case Float64:
+		return a.data.([]float64)[offset], nil
+	case Float32:
+		return float64(a.data.([]float32)[offset]), nil
+	default:
+		return 0, errors.New("Get not supported for Bool arrays; use BoolData()")
 	}
-	return float64(a.Data.([]float32)[offset]), nil
 }
 
 func Linspace(start, stop float64, numPoints int) []float64 {
 	if numPoints <= 0 {
 		return nil
+	}
+	if numPoints == 1 {
+		return []float64{start}
 	}
 
 	step := (stop - start) / float64(numPoints-1)
@@ -427,127 +489,316 @@ func Linspace(start, stop float64, numPoints int) []float64 {
 	return result
 }
 
+// --- Aggregation operations (SIMD-backed) ---
+
 func (a *NdArray) Sum() float64 {
 	if a.dtype == Float32 {
-		return float64(vek32.Sum(a.Data.([]float32)))
+		return float64(vek32.Sum(a.data.([]float32)))
 	}
-	return vek.Sum(a.dataAsFloat64())
+	return vek.Sum(a.mustFloat64())
 }
 
 func (a *NdArray) Mean() float64 {
 	if a.dtype == Float32 {
-		return float64(vek32.Mean(a.Data.([]float32)))
+		return float64(vek32.Mean(a.data.([]float32)))
 	}
-	return vek.Mean(a.dataAsFloat64())
+	return vek.Mean(a.mustFloat64())
 }
 
 func (a *NdArray) Min() float64 {
 	if a.dtype == Float32 {
-		return float64(vek32.Min(a.Data.([]float32)))
+		return float64(vek32.Min(a.data.([]float32)))
 	}
-	return vek.Min(a.dataAsFloat64())
+	return vek.Min(a.mustFloat64())
 }
 
 func (a *NdArray) Max() float64 {
 	if a.dtype == Float32 {
-		return float64(vek32.Max(a.Data.([]float32)))
+		return float64(vek32.Max(a.data.([]float32)))
 	}
-	return vek.Max(a.dataAsFloat64())
-}
-
-func (a *NdArray) Abs() *NdArray {
-	if a.dtype == Float32 {
-		return &NdArray{shape: a.shape, Data: vek32.Abs(a.Data.([]float32)), dtype: Float32}
-	}
-	return &NdArray{shape: a.shape, Data: vek.Abs(a.dataAsFloat64()), dtype: Float64}
-}
-
-func (a *NdArray) Neg() *NdArray {
-	if a.dtype == Float32 {
-		return &NdArray{shape: a.shape, Data: vek32.Neg(a.Data.([]float32)), dtype: Float32}
-	}
-	return &NdArray{shape: a.shape, Data: vek.Neg(a.dataAsFloat64()), dtype: Float64}
-}
-
-func (a *NdArray) Sqrt() *NdArray {
-	if a.dtype == Float32 {
-		return &NdArray{shape: a.shape, Data: vek32.Sqrt(a.Data.([]float32)), dtype: Float32}
-	}
-	return &NdArray{shape: a.shape, Data: vek.Sqrt(a.dataAsFloat64()), dtype: Float64}
+	return vek.Max(a.mustFloat64())
 }
 
 func (a *NdArray) Prod() float64 {
 	if a.dtype == Float32 {
-		return float64(vek32.Prod(a.Data.([]float32)))
+		return float64(vek32.Prod(a.data.([]float32)))
 	}
-	return vek.Prod(a.dataAsFloat64())
+	return vek.Prod(a.mustFloat64())
 }
 
-func (a *NdArray) CumSum() *NdArray {
+// Median returns the median value.
+func (a *NdArray) Median() float64 {
 	if a.dtype == Float32 {
-		return &NdArray{shape: a.shape, Data: vek32.CumSum(a.Data.([]float32)), dtype: Float32}
+		return float64(vek32.Median(a.data.([]float32)))
 	}
-	return &NdArray{shape: a.shape, Data: vek.CumSum(a.dataAsFloat64()), dtype: Float64}
+	return vek.Median(a.mustFloat64())
 }
 
-func (a *NdArray) CumProd() *NdArray {
+// Quantile returns the q-th quantile (0 <= q <= 1).
+func (a *NdArray) Quantile(q float64) float64 {
 	if a.dtype == Float32 {
-		return &NdArray{shape: a.shape, Data: vek32.CumProd(a.Data.([]float32)), dtype: Float32}
+		return float64(vek32.Quantile(a.data.([]float32), float32(q)))
 	}
-	return &NdArray{shape: a.shape, Data: vek.CumProd(a.dataAsFloat64()), dtype: Float64}
+	return vek.Quantile(a.mustFloat64(), q)
+}
+
+// ArgMin returns the index of the minimum element.
+func (a *NdArray) ArgMin() int {
+	if a.dtype == Float32 {
+		return vek32.ArgMin(a.data.([]float32))
+	}
+	return vek.ArgMin(a.mustFloat64())
+}
+
+// ArgMax returns the index of the maximum element.
+func (a *NdArray) ArgMax() int {
+	if a.dtype == Float32 {
+		return vek32.ArgMax(a.data.([]float32))
+	}
+	return vek.ArgMax(a.mustFloat64())
+}
+
+// --- Unary operations (SIMD-backed) ---
+
+func (a *NdArray) Abs() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Abs(a.data.([]float32)), dtype: Float32}
+	}
+	return &NdArray{shape: a.shape, data: vek.Abs(a.mustFloat64()), dtype: Float64}
+}
+
+func (a *NdArray) Neg() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Neg(a.data.([]float32)), dtype: Float32}
+	}
+	return &NdArray{shape: a.shape, data: vek.Neg(a.mustFloat64()), dtype: Float64}
+}
+
+// Inv computes element-wise reciprocal (1/x).
+func (a *NdArray) Inv() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Inv(a.data.([]float32)), dtype: Float32}
+	}
+	return &NdArray{shape: a.shape, data: vek.Inv(a.mustFloat64()), dtype: Float64}
+}
+
+func (a *NdArray) Sqrt() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Sqrt(a.data.([]float32)), dtype: Float32}
+	}
+	return &NdArray{shape: a.shape, data: vek.Sqrt(a.mustFloat64()), dtype: Float64}
 }
 
 func (a *NdArray) Round() *NdArray {
 	if a.dtype == Float32 {
-		return &NdArray{shape: a.shape, Data: vek32.Round(a.Data.([]float32)), dtype: Float32}
+		return &NdArray{shape: a.shape, data: vek32.Round(a.data.([]float32)), dtype: Float32}
 	}
-	return &NdArray{shape: a.shape, Data: vek.Round(a.dataAsFloat64()), dtype: Float64}
+	return &NdArray{shape: a.shape, data: vek.Round(a.mustFloat64()), dtype: Float64}
 }
 
 func (a *NdArray) Floor() *NdArray {
 	if a.dtype == Float32 {
-		return &NdArray{shape: a.shape, Data: vek32.Floor(a.Data.([]float32)), dtype: Float32}
+		return &NdArray{shape: a.shape, data: vek32.Floor(a.data.([]float32)), dtype: Float32}
 	}
-	return &NdArray{shape: a.shape, Data: vek.Floor(a.dataAsFloat64()), dtype: Float64}
+	return &NdArray{shape: a.shape, data: vek.Floor(a.mustFloat64()), dtype: Float64}
 }
 
 func (a *NdArray) Ceil() *NdArray {
 	if a.dtype == Float32 {
-		return &NdArray{shape: a.shape, Data: vek32.Ceil(a.Data.([]float32)), dtype: Float32}
+		return &NdArray{shape: a.shape, data: vek32.Ceil(a.data.([]float32)), dtype: Float32}
 	}
-	return &NdArray{shape: a.shape, Data: vek.Ceil(a.dataAsFloat64()), dtype: Float64}
+	return &NdArray{shape: a.shape, data: vek.Ceil(a.mustFloat64()), dtype: Float64}
 }
+
+// --- Transcendental functions (vek32 SIMD-backed for Float32, math stdlib for Float64) ---
+
+// Sin computes element-wise sine.
+func (a *NdArray) Sin() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Sin(a.data.([]float32)), dtype: Float32}
+	}
+	d := a.mustFloat64()
+	out := make([]float64, len(d))
+	for i, v := range d {
+		out[i] = math.Sin(v)
+	}
+	return &NdArray{shape: a.shape, data: out, dtype: Float64}
+}
+
+// Cos computes element-wise cosine.
+func (a *NdArray) Cos() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Cos(a.data.([]float32)), dtype: Float32}
+	}
+	d := a.mustFloat64()
+	out := make([]float64, len(d))
+	for i, v := range d {
+		out[i] = math.Cos(v)
+	}
+	return &NdArray{shape: a.shape, data: out, dtype: Float64}
+}
+
+// Exp computes element-wise exponential (e^x).
+func (a *NdArray) Exp() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Exp(a.data.([]float32)), dtype: Float32}
+	}
+	d := a.mustFloat64()
+	out := make([]float64, len(d))
+	for i, v := range d {
+		out[i] = math.Exp(v)
+	}
+	return &NdArray{shape: a.shape, data: out, dtype: Float64}
+}
+
+// Log computes element-wise natural logarithm.
+func (a *NdArray) Log() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Log(a.data.([]float32)), dtype: Float32}
+	}
+	d := a.mustFloat64()
+	out := make([]float64, len(d))
+	for i, v := range d {
+		out[i] = math.Log(v)
+	}
+	return &NdArray{shape: a.shape, data: out, dtype: Float64}
+}
+
+// Log2 computes element-wise base-2 logarithm.
+func (a *NdArray) Log2() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Log2(a.data.([]float32)), dtype: Float32}
+	}
+	d := a.mustFloat64()
+	out := make([]float64, len(d))
+	for i, v := range d {
+		out[i] = math.Log2(v)
+	}
+	return &NdArray{shape: a.shape, data: out, dtype: Float64}
+}
+
+// Log10 computes element-wise base-10 logarithm.
+func (a *NdArray) Log10() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.Log10(a.data.([]float32)), dtype: Float32}
+	}
+	d := a.mustFloat64()
+	out := make([]float64, len(d))
+	for i, v := range d {
+		out[i] = math.Log10(v)
+	}
+	return &NdArray{shape: a.shape, data: out, dtype: Float64}
+}
+
+// --- Cumulative operations (SIMD-backed) ---
+
+func (a *NdArray) CumSum() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.CumSum(a.data.([]float32)), dtype: Float32}
+	}
+	return &NdArray{shape: a.shape, data: vek.CumSum(a.mustFloat64()), dtype: Float64}
+}
+
+func (a *NdArray) CumProd() *NdArray {
+	if a.dtype == Float32 {
+		return &NdArray{shape: a.shape, data: vek32.CumProd(a.data.([]float32)), dtype: Float32}
+	}
+	return &NdArray{shape: a.shape, data: vek.CumProd(a.mustFloat64()), dtype: Float64}
+}
+
+// --- Vector operations (SIMD-backed) ---
+
+// Dot computes the dot product of two 1-D arrays.
+func Dot(a, b *NdArray) (float64, error) {
+	if len(a.shape) != 1 || len(b.shape) != 1 {
+		return 0, errors.New("Dot requires 1-D arrays")
+	}
+	if a.shape[0] != b.shape[0] {
+		return 0, errors.New("Dot requires arrays of equal length")
+	}
+	if a.dtype == Float32 && b.dtype == Float32 {
+		return float64(vek32.Dot(a.data.([]float32), b.data.([]float32))), nil
+	}
+	return vek.Dot(a.mustFloat64(), b.mustFloat64()), nil
+}
+
+// Norm computes the Euclidean (L2) norm.
+func (a *NdArray) Norm() float64 {
+	if a.dtype == Float32 {
+		return float64(vek32.Norm(a.data.([]float32)))
+	}
+	return vek.Norm(a.mustFloat64())
+}
+
+// ManhattanNorm computes the L1 norm.
+func (a *NdArray) ManhattanNorm() float64 {
+	if a.dtype == Float32 {
+		return float64(vek32.ManhattanNorm(a.data.([]float32)))
+	}
+	return vek.ManhattanNorm(a.mustFloat64())
+}
+
+// Distance computes the Euclidean distance between two arrays.
+func Distance(a, b *NdArray) (float64, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return 0, errors.New("shapes must be equal for Distance")
+	}
+	if a.dtype == Float32 && b.dtype == Float32 {
+		return float64(vek32.Distance(a.data.([]float32), b.data.([]float32))), nil
+	}
+	return vek.Distance(a.mustFloat64(), b.mustFloat64()), nil
+}
+
+// ManhattanDistance computes the L1 distance between two arrays.
+func ManhattanDistance(a, b *NdArray) (float64, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return 0, errors.New("shapes must be equal for ManhattanDistance")
+	}
+	if a.dtype == Float32 && b.dtype == Float32 {
+		return float64(vek32.ManhattanDistance(a.data.([]float32), b.data.([]float32))), nil
+	}
+	return vek.ManhattanDistance(a.mustFloat64(), b.mustFloat64()), nil
+}
+
+// CosineSimilarity computes the cosine similarity between two arrays.
+func CosineSimilarity(a, b *NdArray) (float64, error) {
+	if !shapesEqual(a.shape, b.shape) {
+		return 0, errors.New("shapes must be equal for CosineSimilarity")
+	}
+	if a.dtype == Float32 && b.dtype == Float32 {
+		return float64(vek32.CosineSimilarity(a.data.([]float32), b.data.([]float32))), nil
+	}
+	return vek.CosineSimilarity(a.mustFloat64(), b.mustFloat64()), nil
+}
+
+// --- Comparison operations (SIMD-backed) ---
 
 // Eq performs element-wise equality comparison.
 func Eq(a, b *NdArray) (*NdArray, error) {
 	if !shapesEqual(a.shape, b.shape) {
-		// TODO: Implement broadcasting for boolean ops
 		return nil, errors.New("broadcasting not yet supported for boolean ops")
 	}
 	size := ProdInt(a.shape)
 	data := make([]bool, size)
 
 	if a.dtype == Float64 && b.dtype == Float64 {
-		vek.Eq_Into(data, a.Data.([]float64), b.Data.([]float64))
+		vek.Eq_Into(data, a.data.([]float64), b.data.([]float64))
 	} else if a.dtype == Float32 && b.dtype == Float32 {
-		vek32.Eq_Into(data, a.Data.([]float32), b.Data.([]float32))
+		vek32.Eq_Into(data, a.data.([]float32), b.data.([]float32))
 	} else if a.dtype == Bool && b.dtype == Bool {
-		// vek does not have Eq for bools, do manual
-		aData := a.Data.([]bool)
-		bData := b.Data.([]bool)
+		aData := a.data.([]bool)
+		bData := b.data.([]bool)
 		for i := range size {
 			data[i] = aData[i] == bData[i]
 		}
 	} else {
-		// Mixed types or other combinations - convert to float64 for comparison?
-		// Or strictly enforce types? Let's convert to float64 for numbers.
 		if a.dtype != Bool && b.dtype != Bool {
-			vek.Eq_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+			vek.Eq_Into(data, a.mustFloat64(), b.mustFloat64())
 		} else {
 			return nil, errors.New("cannot compare boolean with numeric type")
 		}
 	}
-	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+	return &NdArray{shape: a.shape, data: data, dtype: Bool}, nil
 }
 
 // Neq performs element-wise non-equality comparison.
@@ -559,23 +810,23 @@ func Neq(a, b *NdArray) (*NdArray, error) {
 	data := make([]bool, size)
 
 	if a.dtype == Float64 && b.dtype == Float64 {
-		vek.Neq_Into(data, a.Data.([]float64), b.Data.([]float64))
+		vek.Neq_Into(data, a.data.([]float64), b.data.([]float64))
 	} else if a.dtype == Float32 && b.dtype == Float32 {
-		vek32.Neq_Into(data, a.Data.([]float32), b.Data.([]float32))
+		vek32.Neq_Into(data, a.data.([]float32), b.data.([]float32))
 	} else if a.dtype == Bool && b.dtype == Bool {
-		aData := a.Data.([]bool)
-		bData := b.Data.([]bool)
+		aData := a.data.([]bool)
+		bData := b.data.([]bool)
 		for i := range size {
 			data[i] = aData[i] != bData[i]
 		}
 	} else {
 		if a.dtype != Bool && b.dtype != Bool {
-			vek.Neq_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+			vek.Neq_Into(data, a.mustFloat64(), b.mustFloat64())
 		} else {
 			return nil, errors.New("cannot compare boolean with numeric type")
 		}
 	}
-	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+	return &NdArray{shape: a.shape, data: data, dtype: Bool}, nil
 }
 
 // Lt performs element-wise less than comparison.
@@ -583,21 +834,20 @@ func Lt(a, b *NdArray) (*NdArray, error) {
 	if !shapesEqual(a.shape, b.shape) {
 		return nil, errors.New("broadcasting not yet supported for boolean ops")
 	}
-	size := ProdInt(a.shape)
-	data := make([]bool, size)
+	data := make([]bool, ProdInt(a.shape))
 
 	if a.dtype == Float64 && b.dtype == Float64 {
-		vek.Lt_Into(data, a.Data.([]float64), b.Data.([]float64))
+		vek.Lt_Into(data, a.data.([]float64), b.data.([]float64))
 	} else if a.dtype == Float32 && b.dtype == Float32 {
-		vek32.Lt_Into(data, a.Data.([]float32), b.Data.([]float32))
+		vek32.Lt_Into(data, a.data.([]float32), b.data.([]float32))
 	} else {
 		if a.dtype != Bool && b.dtype != Bool {
-			vek.Lt_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+			vek.Lt_Into(data, a.mustFloat64(), b.mustFloat64())
 		} else {
 			return nil, errors.New("cannot compare boolean with numeric type")
 		}
 	}
-	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+	return &NdArray{shape: a.shape, data: data, dtype: Bool}, nil
 }
 
 // Lte performs element-wise less than or equal comparison.
@@ -605,21 +855,20 @@ func Lte(a, b *NdArray) (*NdArray, error) {
 	if !shapesEqual(a.shape, b.shape) {
 		return nil, errors.New("broadcasting not yet supported for boolean ops")
 	}
-	size := ProdInt(a.shape)
-	data := make([]bool, size)
+	data := make([]bool, ProdInt(a.shape))
 
 	if a.dtype == Float64 && b.dtype == Float64 {
-		vek.Lte_Into(data, a.Data.([]float64), b.Data.([]float64))
+		vek.Lte_Into(data, a.data.([]float64), b.data.([]float64))
 	} else if a.dtype == Float32 && b.dtype == Float32 {
-		vek32.Lte_Into(data, a.Data.([]float32), b.Data.([]float32))
+		vek32.Lte_Into(data, a.data.([]float32), b.data.([]float32))
 	} else {
 		if a.dtype != Bool && b.dtype != Bool {
-			vek.Lte_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+			vek.Lte_Into(data, a.mustFloat64(), b.mustFloat64())
 		} else {
 			return nil, errors.New("cannot compare boolean with numeric type")
 		}
 	}
-	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+	return &NdArray{shape: a.shape, data: data, dtype: Bool}, nil
 }
 
 // Gt performs element-wise greater than comparison.
@@ -627,21 +876,20 @@ func Gt(a, b *NdArray) (*NdArray, error) {
 	if !shapesEqual(a.shape, b.shape) {
 		return nil, errors.New("broadcasting not yet supported for boolean ops")
 	}
-	size := ProdInt(a.shape)
-	data := make([]bool, size)
+	data := make([]bool, ProdInt(a.shape))
 
 	if a.dtype == Float64 && b.dtype == Float64 {
-		vek.Gt_Into(data, a.Data.([]float64), b.Data.([]float64))
+		vek.Gt_Into(data, a.data.([]float64), b.data.([]float64))
 	} else if a.dtype == Float32 && b.dtype == Float32 {
-		vek32.Gt_Into(data, a.Data.([]float32), b.Data.([]float32))
+		vek32.Gt_Into(data, a.data.([]float32), b.data.([]float32))
 	} else {
 		if a.dtype != Bool && b.dtype != Bool {
-			vek.Gt_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+			vek.Gt_Into(data, a.mustFloat64(), b.mustFloat64())
 		} else {
 			return nil, errors.New("cannot compare boolean with numeric type")
 		}
 	}
-	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+	return &NdArray{shape: a.shape, data: data, dtype: Bool}, nil
 }
 
 // Gte performs element-wise greater than or equal comparison.
@@ -649,22 +897,23 @@ func Gte(a, b *NdArray) (*NdArray, error) {
 	if !shapesEqual(a.shape, b.shape) {
 		return nil, errors.New("broadcasting not yet supported for boolean ops")
 	}
-	size := ProdInt(a.shape)
-	data := make([]bool, size)
+	data := make([]bool, ProdInt(a.shape))
 
 	if a.dtype == Float64 && b.dtype == Float64 {
-		vek.Gte_Into(data, a.Data.([]float64), b.Data.([]float64))
+		vek.Gte_Into(data, a.data.([]float64), b.data.([]float64))
 	} else if a.dtype == Float32 && b.dtype == Float32 {
-		vek32.Gte_Into(data, a.Data.([]float32), b.Data.([]float32))
+		vek32.Gte_Into(data, a.data.([]float32), b.data.([]float32))
 	} else {
 		if a.dtype != Bool && b.dtype != Bool {
-			vek.Gte_Into(data, a.dataAsFloat64(), b.dataAsFloat64())
+			vek.Gte_Into(data, a.mustFloat64(), b.mustFloat64())
 		} else {
 			return nil, errors.New("cannot compare boolean with numeric type")
 		}
 	}
-	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+	return &NdArray{shape: a.shape, data: data, dtype: Bool}, nil
 }
+
+// --- Boolean operations (SIMD-backed) ---
 
 // And performs element-wise logical AND.
 func And(a, b *NdArray) (*NdArray, error) {
@@ -674,11 +923,10 @@ func And(a, b *NdArray) (*NdArray, error) {
 	if a.dtype != Bool || b.dtype != Bool {
 		return nil, errors.New("logical operations require boolean arrays")
 	}
-
 	size := ProdInt(a.shape)
 	data := make([]bool, size)
-	vek.And_Into(data, a.Data.([]bool), b.Data.([]bool))
-	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+	vek.And_Into(data, a.data.([]bool), b.data.([]bool))
+	return &NdArray{shape: a.shape, data: data, dtype: Bool}, nil
 }
 
 // Or performs element-wise logical OR.
@@ -689,11 +937,10 @@ func Or(a, b *NdArray) (*NdArray, error) {
 	if a.dtype != Bool || b.dtype != Bool {
 		return nil, errors.New("logical operations require boolean arrays")
 	}
-
 	size := ProdInt(a.shape)
 	data := make([]bool, size)
-	vek.Or_Into(data, a.Data.([]bool), b.Data.([]bool))
-	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+	vek.Or_Into(data, a.data.([]bool), b.data.([]bool))
+	return &NdArray{shape: a.shape, data: data, dtype: Bool}, nil
 }
 
 // Xor performs element-wise logical XOR.
@@ -704,39 +951,159 @@ func Xor(a, b *NdArray) (*NdArray, error) {
 	if a.dtype != Bool || b.dtype != Bool {
 		return nil, errors.New("logical operations require boolean arrays")
 	}
-
 	size := ProdInt(a.shape)
 	data := make([]bool, size)
-	vek.Xor_Into(data, a.Data.([]bool), b.Data.([]bool))
-	return &NdArray{shape: a.shape, Data: data, dtype: Bool}, nil
+	vek.Xor_Into(data, a.data.([]bool), b.data.([]bool))
+	return &NdArray{shape: a.shape, data: data, dtype: Bool}, nil
 }
 
 // Not performs element-wise logical NOT.
-func (a *NdArray) Not() *NdArray {
+func (a *NdArray) Not() (*NdArray, error) {
 	if a.dtype != Bool {
-		panic("logical operations require boolean arrays")
+		return nil, errors.New("logical operations require boolean arrays")
 	}
 	size := ProdInt(a.shape)
 	data := make([]bool, size)
-	vek.Not_Into(data, a.Data.([]bool))
-	return &NdArray{shape: a.shape, Data: data, dtype: Bool}
+	vek.Not_Into(data, a.data.([]bool))
+	return &NdArray{shape: a.shape, data: data, dtype: Bool}, nil
 }
 
 // Any returns true if any element is true.
-func (a *NdArray) Any() bool {
+func (a *NdArray) Any() (bool, error) {
 	if a.dtype != Bool {
-		// Or convert to bool? For now strict.
-		panic("logical operations require boolean arrays")
+		return false, errors.New("logical operations require boolean arrays")
 	}
-	return vek.Any(a.Data.([]bool))
+	return vek.Any(a.data.([]bool)), nil
 }
 
 // All returns true if all elements are true.
-func (a *NdArray) All() bool {
+func (a *NdArray) All() (bool, error) {
 	if a.dtype != Bool {
-		panic("logical operations require boolean arrays")
+		return false, errors.New("logical operations require boolean arrays")
 	}
-	return vek.All(a.Data.([]bool))
+	return vek.All(a.data.([]bool)), nil
+}
+
+// None returns true if no elements are true.
+func (a *NdArray) None() (bool, error) {
+	if a.dtype != Bool {
+		return false, errors.New("logical operations require boolean arrays")
+	}
+	return vek.None(a.data.([]bool)), nil
+}
+
+// Count returns the number of true elements.
+func (a *NdArray) Count() (int, error) {
+	if a.dtype != Bool {
+		return 0, errors.New("logical operations require boolean arrays")
+	}
+	return vek.Count(a.data.([]bool)), nil
+}
+
+// Select returns elements from a where mask is true (filtered to 1-D).
+func Select(a *NdArray, mask *NdArray) (*NdArray, error) {
+	if mask.dtype != Bool {
+		return nil, errors.New("mask must be a Bool array")
+	}
+	if ProdInt(a.shape) != ProdInt(mask.shape) {
+		return nil, errors.New("array and mask must have the same number of elements")
+	}
+	boolData := mask.data.([]bool)
+	if a.dtype == Float32 {
+		result := vek32.Select(a.data.([]float32), boolData)
+		return &NdArray{shape: []int{len(result)}, data: result, dtype: Float32}, nil
+	}
+	result := vek.Select(a.mustFloat64(), boolData)
+	return &NdArray{shape: []int{len(result)}, data: result, dtype: Float64}, nil
+}
+
+// --- Utility methods ---
+
+// Copy returns a deep copy of the NdArray.
+func (a *NdArray) Copy() *NdArray {
+	shapeCopy := make([]int, len(a.shape))
+	copy(shapeCopy, a.shape)
+
+	switch a.dtype {
+	case Float64:
+		src := a.data.([]float64)
+		dst := make([]float64, len(src))
+		copy(dst, src)
+		return &NdArray{shape: shapeCopy, data: dst, dtype: Float64}
+	case Float32:
+		src := a.data.([]float32)
+		dst := make([]float32, len(src))
+		copy(dst, src)
+		return &NdArray{shape: shapeCopy, data: dst, dtype: Float32}
+	default:
+		src := a.data.([]bool)
+		dst := make([]bool, len(src))
+		copy(dst, src)
+		return &NdArray{shape: shapeCopy, data: dst, dtype: Bool}
+	}
+}
+
+// String returns a human-readable representation of the NdArray.
+func (a *NdArray) String() string {
+	var dtypeStr string
+	switch a.dtype {
+	case Float64:
+		dtypeStr = "float64"
+	case Float32:
+		dtypeStr = "float32"
+	case Bool:
+		dtypeStr = "bool"
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "NdArray(shape=%v, dtype=%s, data=", a.shape, dtypeStr)
+
+	size := ProdInt(a.shape)
+	const maxShow = 10
+	switch a.dtype {
+	case Float64:
+		d := a.data.([]float64)
+		b.WriteByte('[')
+		for i := range min(size, maxShow) {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%g", d[i])
+		}
+		if size > maxShow {
+			fmt.Fprintf(&b, ", ...(%d more)", size-maxShow)
+		}
+		b.WriteByte(']')
+	case Float32:
+		d := a.data.([]float32)
+		b.WriteByte('[')
+		for i := range min(size, maxShow) {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%g", d[i])
+		}
+		if size > maxShow {
+			fmt.Fprintf(&b, ", ...(%d more)", size-maxShow)
+		}
+		b.WriteByte(']')
+	case Bool:
+		d := a.data.([]bool)
+		b.WriteByte('[')
+		for i := range min(size, maxShow) {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%t", d[i])
+		}
+		if size > maxShow {
+			fmt.Fprintf(&b, ", ...(%d more)", size-maxShow)
+		}
+		b.WriteByte(']')
+	}
+
+	b.WriteByte(')')
+	return b.String()
 }
 
 func shapesEqual(a, b []int) bool {
