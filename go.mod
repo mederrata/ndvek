@@ -1,6 +1,6 @@
 module github.com/mederrata/ndvek
 
-go 1.23.0
+go 1.26.0
 
 require github.com/viterin/vek v0.4.2
 

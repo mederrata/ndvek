@@ -63,10 +63,7 @@ func NewNdArray(shape []int, data any) (*NdArray, error) {
 // broadcastShapes finds a broadcasted shape from two shapes.
 func broadcastShapes(shape1, shape2 []int) ([]int, error) {
 	len1, len2 := len(shape1), len(shape2)
-	maxLen := len1
-	if len2 > len1 {
-		maxLen = len2
-	}
+	maxLen := max(len2, len1)
 	broadcastedShape := make([]int, maxLen)
 
 	for i := 0; i < maxLen; i++ {
@@ -80,11 +77,7 @@ func broadcastShapes(shape1, shape2 []int) ([]int, error) {
 		if dim1 != 1 && dim2 != 1 && dim1 != dim2 {
 			return nil, fmt.Errorf("incompatible shapes for broadcasting: %v and %v", shape1, shape2)
 		}
-		if dim1 > dim2 {
-			broadcastedShape[maxLen-1-i] = dim1
-		} else {
-			broadcastedShape[maxLen-1-i] = dim2
-		}
+		broadcastedShape[maxLen-1-i] = max(dim1, dim2)
 	}
 	return broadcastedShape, nil
 }
@@ -140,7 +133,7 @@ func (a *NdArray) ApplyHadamardOp(op func(float64) float64) error {
 
 	dSize := len(a.Data.([]float64))
 	d := a.Data.([]float64)
-	for i := 0; i < dSize; i++ {
+	for i := range dSize {
 		d[i] = op(d[i])
 	}
 	return nil
@@ -164,7 +157,7 @@ func ApplyOp(a, b *NdArray, op func(float64, float64) float64) (*NdArray, error)
 	aData := a.dataAsFloat64()
 	bData := b.dataAsFloat64()
 
-	for i := 0; i < len(resultData); i++ {
+	for i := range resultData {
 		aIndex, err := broadcastIndex(a.shape, bShape, i)
 		if err != nil {
 			panic(err)
@@ -428,7 +421,7 @@ func Linspace(start, stop float64, numPoints int) []float64 {
 
 	step := (stop - start) / float64(numPoints-1)
 	result := make([]float64, numPoints)
-	for i := 0; i < numPoints; i++ {
+	for i := range numPoints {
 		result[i] = start + float64(i)*step
 	}
 	return result
@@ -542,7 +535,7 @@ func Eq(a, b *NdArray) (*NdArray, error) {
 		// vek does not have Eq for bools, do manual
 		aData := a.Data.([]bool)
 		bData := b.Data.([]bool)
-		for i := 0; i < size; i++ {
+		for i := range size {
 			data[i] = aData[i] == bData[i]
 		}
 	} else {
@@ -572,7 +565,7 @@ func Neq(a, b *NdArray) (*NdArray, error) {
 	} else if a.dtype == Bool && b.dtype == Bool {
 		aData := a.Data.([]bool)
 		bData := b.Data.([]bool)
-		for i := 0; i < size; i++ {
+		for i := range size {
 			data[i] = aData[i] != bData[i]
 		}
 	} else {
