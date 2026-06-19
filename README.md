@@ -1,5 +1,7 @@
 # NDVek
 
+[![Donate via Zeffy](https://img.shields.io/badge/Donate-Support%20Transparency%20in%20AI-ff5a5f?style=for-the-badge)](https://www.zeffy.com/en-US/donation-form/donate-to-support-transparency-in-ai)
+
 NDVek is a high-performance Go library for multi-dimensional array operations, powered by the `vek` SIMD backend. It supports both `float64` and `float32` data types, automatic broadcasting, and a some common operations.
 
 ## Methods
